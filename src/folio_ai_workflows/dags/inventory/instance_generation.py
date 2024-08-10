@@ -1,17 +1,19 @@
 import logging
 
 import pendulum
-from jsonpath_ng import jsonpath, parse
 
 from typing import Union
 
+from airflow.models.connection import Connection
 from airflow.decorators import dag, task, task_group
-from airflow.models import Variable
 from airflow.operators.python import get_current_context
+
+from folioclient import FolioClient
 
 from folio_ai_workflows.inventory.instance import (
     enhance,
-    reference_data
+    reference_data,
+    reference_lookups,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,12 +29,13 @@ logger = logging.getLogger(__name__)
 def instance_generation():
     """
     ### Instance Generation
-    This DAG processes an incoming JSON instance, typically created by a Generative 
-    AI process. It queries the FOLIO system for reference data required by the 
-    instance properties. Then, it attempts to match the instance with existing 
-    instances in FOLIO by calling edge-ai. If a match is found, the existing 
+    This DAG processes an incoming JSON instance, typically created by a Generative
+    AI process. It queries the FOLIO system for reference data required by the
+    instance properties. Then, it attempts to match the instance with existing
+    instances in FOLIO by calling edge-ai. If a match is found, the existing
     instance is returned; otherwise, the new instance is added to FOLIO.
     """
+
     @task(multiple_outputs=True)
     def incoming_instance_record() -> dict:
         """
@@ -44,64 +47,67 @@ def instance_generation():
         """
         context = get_current_context()
         params = context.get("params")
-        return {
-            "trial_instance": params['instance'],
-            "jobId": params['jobId']
-        }
-
+        return {"trial_instance": params["instance"], "jobId": params["jobId"]}
 
     @task(multiple_outputs=True)
     def retrieve_instance_reference_data() -> dict:
+        connection = Connection.get_connection_from_secrets("folio")
         folio_client = FolioClient(
-            Variable.get("okapi_url"),
-            Variable.get("folio_tenant"),
-            Variable.get("folio_user"),
-            Variable.get("folio_user_password"),
-        ) 
+            connection.host,
+            connection.extra_dejson["tenant"],
+            connection.login,
+            connection.password,
+        )
         return reference_data(folio_client=folio_client)
-
 
     @task()
     def enhance_instance(reference_lookups: dict, instance: dict, reference_data: dict):
-        for name in reference_lookups.keys():
-            text_key = name.split(".")[-1]
-            ref_key = text_key.replace("Text", "Id")
-            path_expression = parse(name)
-            for match in path_expression.find(instance):
-                if match.value not in reference_data[ref_key]:
-                    logger.error(f"{value} not found in reference data's {ref_key}")
-                    continue
-                parent = match.context.value
-                parent[ref_key] = reference_data[ref_key][match.value]
-                del parent[text_key]
-                logger.info(f"Replaced {text_key} value {match.value} with {ref_key} UUID")
-        return instance 
+        return enhance(instance, reference_lookups, reference_data)
 
-
-    @task()
+    @task.branch
     def match_existing_instances(modified_instance):
-         logger.info(f"Submit {modified_instance} to edge-ai Instance similarity measure")
-         import random
-         if random.random() > .5:
-             return True
-         return False
+        logger.info(
+            f"Submit {modified_instance} to edge-ai Instance similarity measure"
+        )
+        import random
+
+        choice = random.random()
+        logger.info(f"Choice is {choice}")
+        if choice > 0.7:
+            return ["post_instance_to_folio"]
+        return ["send_matched_instance"]
 
     @task()
     def post_instance_to_folio(instance: dict):
         logger.info(f"Would post {instance} to Okapi")
         return True
 
+    @task()
+    def send_matched_instance():
+        logger.info(f"Would return matched instance (or just matched uuid)")
+        return True
+
+    @task(trigger_rule="none_failed_min_one_success")
+    def notify_edge_ai(job_id: str):
+        logger.info(f"Sends notification to edge-ai with jobId {job_id}")
 
     setup = incoming_instance_record()
 
-    reference_data = retrieve_instance_reference_data()
+    instance_reference_data = retrieve_instance_reference_data()
 
-    modified_instance = enhance_instance(reference_lookups=reference_lookups, instance=setup['trial_instance'], reference_data=reference_data)
+    modified_instance = enhance_instance(
+        reference_lookups=reference_lookups,
+        instance=setup["trial_instance"],
+        reference_data=instance_reference_data,
+    )
 
     found_match = match_existing_instances(modified_instance)
 
-    post_result = post_instance_to_folio(modified_instance)
-        
-    
-    
+    (
+        found_match
+        >> [send_matched_instance(), post_instance_to_folio(modified_instance)]
+        >> notify_edge_ai(setup["jobId"])
+    )
+
+
 instance_generation()
