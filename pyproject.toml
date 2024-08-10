@@ -1,0 +1,17 @@
+[project]
+name = "folio-ai-workflows"
+version = "0.1.0"
+description = "Airflow example DAGs and tasks for supporting FOLIO edge-ai module"
+authors = [{name = "Jeremy Nelson", email = "jpnelson@stanford.edu"}]
+requires-python = ">= 3.12"
+dependencies = [
+    "folioclient"
+]
+readme = "README.md"
+license = {file = "LICENSE-2.0.txt"}
+keywords = ["folio", "ai", "airflow"]
+
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta" 

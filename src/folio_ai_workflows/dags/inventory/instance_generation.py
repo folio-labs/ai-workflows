@@ -6,45 +6,15 @@ from jsonpath_ng import jsonpath, parse
 from typing import Union
 
 from airflow.decorators import dag, task, task_group
+from airflow.models import Variable
 from airflow.operators.python import get_current_context
 
+from folio_ai_workflows.inventory.instance import (
+    enhance,
+    reference_data
+)
+
 logger = logging.getLogger(__name__)
-
-reference_lookups = {
-    'contributors[*].contributorTypeText': 
-       ["Actor",
-        "Author",
-        "Contributor",
-        "Editor",
-        "Narrator",
-        "Publisher"],
-    'contributors[*].contributorNameTypeText': ["Personal name", "Corporate name"],
-    'identifiers[*].identifierTypeText': [
-       "DOI",
-       "ISBN",
-       "LCCN",
-       "ISSN",
-       "OCLC",
-       "Local identifier"],
-    'instanceTypeText': [
-        "text",
-        "still image",
-        "computer program",
-        "computer dataset",
-        "two-dimensional moving image",
-        "notated music",
-        "unspecified",
-    ]
-}
-
-
-def instance_references(reference_lookup: dict) -> dict:
-    return {
-        "contributorTypeId": { "Author": "9f0a2cf0-7a9b-45a2-a403-f68d2850d07c", "Editor": "9deb29d1-3e71-4951-9413-a80adac703d0"},
-        "contributorNameTypeId": {"Personal name": "2b94c631-fca9-4892-a730-03ee529ffe2a" },
-        "identifierTypeId": {"Local identifier": "7e591197-f335-4afb-bc6d-a6d76ca3bace" },
-        "instanceTypeId": {"text": "30fffe0e-e985-4144-b2e2-1e8179bdb41f"}
-    }
 
 
 @dag(
@@ -82,7 +52,13 @@ def instance_generation():
 
     @task(multiple_outputs=True)
     def retrieve_instance_reference_data() -> dict:
-        return instance_references(reference_lookups)
+        folio_client = FolioClient(
+            Variable.get("okapi_url"),
+            Variable.get("folio_tenant"),
+            Variable.get("folio_user"),
+            Variable.get("folio_user_password"),
+        ) 
+        return reference_data(folio_client=folio_client)
 
 
     @task()
@@ -124,8 +100,7 @@ def instance_generation():
 
     found_match = match_existing_instances(modified_instance)
 
-    if not found_match:
-        post_result = post_instance_to_folio(modified_instance)
+    post_result = post_instance_to_folio(modified_instance)
         
     
     
