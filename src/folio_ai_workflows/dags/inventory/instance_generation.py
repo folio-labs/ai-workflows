@@ -10,7 +10,7 @@ from airflow.operators.python import get_current_context
 
 from folioclient import FolioClient
 
-from folio_ai_workflows.inventory.instance import (
+from folio_ai_workflows.plugins.inventory.instance import (
     enhance,
     reference_data,
     reference_lookups,
