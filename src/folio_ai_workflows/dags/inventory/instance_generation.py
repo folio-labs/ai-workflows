@@ -2,8 +2,6 @@ import logging
 
 import pendulum
 
-from typing import Union
-
 from airflow.models.connection import Connection
 from airflow.decorators import dag, task, task_group
 from airflow.operators.python import get_current_context
