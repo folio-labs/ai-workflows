@@ -11,8 +11,21 @@ from airflow.operators.python import get_current_context
 from folioclient import FolioClient
 
 
+from folio_ai_workflows.plugins.inventory.instance import (
+    denormalize
+
+)
+
 logger = logging.getLogger(__name__)
 
+def _folio_client() -> FolioClient:
+    connection = Connection.get_connection_from_secrets("folio")
+    return FolioClient(
+        connection.host,
+        connection.extra_dejson["tenant"],
+        connection.login,
+        connection.password,
+    )
 
 @dag(
     schedule=None,
@@ -31,26 +44,14 @@ def instance_embedding():
     """
     @task
     def reference_id_lookups():
-        connection = Connection.get_connection_from_secrets("folio")
-        folio_client = FolioClient(
-            connection.host,
-            connection.extra_dejson["tenant"],
-            connection.login,
-            connection.password,
-        )
+
         return {}
 
     @task
     def retrieve_instances():
         context = get_current_context()
         params = context.get("params")
-        connection = Connection.get_connection_from_secrets("folio")
-        folio_client = FolioClient(
-            connection.host,
-            connection.extra_dejson["tenant"],
-            connection.login,
-            connection.password,
-        )
+        folio_client = _folio_client()
         temp_location = Variable.get("location", "/opt/airflow/tmp")
         temp_path = pathlib.Path(temp_location)
         temp_path.mkdir(parents=True, exist_ok=True)
@@ -66,9 +67,8 @@ def instance_embedding():
 
     @task
     def denormalize_instances(**kwargs):
-        ref_id_lookups = kwargs["reference_lookups"]
-        instance_files = kwargs["files"]
-
+        denormalize(kwargs["files"], _folio_client())
+        
 
     ref_id_lookups = reference_id_lookups()
     instance_files = retrieve_instances()
