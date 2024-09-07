@@ -8,8 +8,9 @@ from airflow.operators.python import get_current_context
 
 from folioclient import FolioClient
 
-from folio_ai_workflows.plugins.inventory.instance import (
+from plugins.inventory.instance import (
     enhance,
+    match_instance,
     reference_data,
     reference_lookups,
 )
@@ -63,17 +64,15 @@ def instance_generation():
         return enhance(instance, reference_lookups, reference_data)
 
     @task.branch
-    def match_existing_instances(modified_instance):
+    def match_existing_instances(modified_instance, task_instance):
         logger.info(
             f"Submit {modified_instance} to edge-ai Instance similarity measure"
         )
-        import random
-
-        choice = random.random()
-        logger.info(f"Choice is {choice}")
-        if choice > 0.7:
-            return ["post_instance_to_folio"]
-        return ["send_matched_instance"]
+        matched_instance_uuid = match_instance(modified_instance)
+        if matched_instance_uuid:
+            task_instance.xcom_push(key="uuid", value=matched_instance_uuid)
+            return ["send_matched_instance"]
+        return ["post_instance_to_folio"]
 
     @task()
     def post_instance_to_folio(instance: dict):
@@ -81,9 +80,12 @@ def instance_generation():
         return True
 
     @task()
-    def send_matched_instance():
-        logger.info(f"Would return matched instance (or just matched uuid)")
-        return True
+    def send_matched_instance(task_instance):
+        matched_instance_uuid = task_instance.xcom_pull(
+            task_ids="match_existing_instances"
+        )
+        logger.info(f"Return matched instance uuid of {matched_instance_uuid}")
+        return matched_instance_uuid
 
     @task(trigger_rule="none_failed_min_one_success")
     def notify_edge_ai(job_id: str):

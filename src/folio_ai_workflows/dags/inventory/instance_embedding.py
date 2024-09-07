@@ -1,19 +1,22 @@
+import asyncio
+import json
 import logging
 import pathlib
 
+import httpx
 import pendulum
 
 from airflow.models import Variable
 from airflow.models.connection import Connection
-from airflow.decorators import dag, task, task_group
+from airflow.decorators import dag, task
 from airflow.operators.python import get_current_context
 
 from folioclient import FolioClient
 
 
-from folio_ai_workflows.plugins.inventory.instance import (
-    denormalize
-
+from plugins.inventory.instance import (
+    denormalize,
+    folio_id_lookups
 )
 
 logger = logging.getLogger(__name__)
@@ -32,6 +35,7 @@ def _folio_client() -> FolioClient:
     start_date=pendulum.datetime(2024, 8, 14, tz="UTC"),
     catchup=False,
     tags=["inventory"],
+    max_active_runs=1,
     render_template_as_native_obj=True,
 )
 def instance_embedding():
@@ -44,8 +48,8 @@ def instance_embedding():
     """
     @task
     def reference_id_lookups():
+        return folio_id_lookups(_folio_client())
 
-        return {}
 
     @task
     def retrieve_instances():
@@ -56,24 +60,71 @@ def instance_embedding():
         temp_path = pathlib.Path(temp_location)
         temp_path.mkdir(parents=True, exist_ok=True)
         instance_files = []
-        if "uuids" in params and len(params["uuids"]) < 250:
-            file_path = temp_path / "local-instance-{pendulum.now().isoformat()}.jsonl"
-            with file_path.open("w+") as fo:
-                for uuid in params["uuids"]:
-                    instance = folio_client.folio_get(f"/inventory/instance/{uuid}")
-                    fo.write(f"{json.dumps(instance)}\n")
-            instance_files.append(str(file_path.absolute()))
+        file_path = temp_path / f"local-instance-{pendulum.now().isoformat()}.jsonl"
+        instance_files.append(str(file_path.absolute()))
+        open_file = file_path.open("w+")
+        if "uuids" in params:
+            for i, uuid in enumerate(params["uuids"]):
+                if not i%250 and i > 0:
+                    open_file.close()
+                    file_path = temp_path / f"local-instance-{pendulum.now().isoformat()}.jsonl"
+                    open_file = file_path.open("w+")
+                    instance_files.append(str(file_path.absolute()))
+                instance = folio_client.folio_get(f"/inventory/instances/{uuid}")
+                open_file.write(f"{json.dumps(instance)}\n")                  
+             
+                
+        if "limit" in params:
+            limit =  params.get("limit", 250)
+            for i,instance in enumerate(
+                folio_client.folio_get(
+                        "/inventory/instances",
+                        key="instances",
+                        query_params={ 
+                            "limit": limit,
+                            "offset": params.get("offset", 0)
+                        }
+                    )
+                ):
+                    # if not i%5_000 and i > 0:
+                    #     open_file.close()
+                    #     file_path = temp_path / f"local-instance-{pendulum.now().isoformat()}.jsonl"
+                    #     open_file = file_path.open("w+")
+                    #     instance_files.append(str(file_path.absolute()))
+                    #     logger.info(f"New {file_path.absolute()} from {i} to {i+250}")
+                    open_file.write(f"{json.dumps(instance)}\n")
+        open_file.close()
         return instance_files
 
     @task
     def denormalize_instances(**kwargs):
-        denormalize(kwargs["files"], _folio_client())
+        denormalize(kwargs["files"], kwargs['references'])
         
+
+    @task
+    def index_instances(**kwargs):
+        connection = Connection.get_connection_from_secrets("edge_ai")
+        output = []
+        for file_path in kwargs["files"]:
+            file_path = file_path.replace("/opt/airflow/", "/Users/jpnelson/40-49 AI and Machine Learning/41.05 FOLIO AI Workflows/")
+            post_result = httpx.post(
+                f"{connection.schema}://{connection.host}:{connection.port}/inventory/instance/index",
+                json={
+                    "source": file_path
+                },
+                timeout=1800
+            )
+            post_result.raise_for_status()
+            logger.info(f"Successfully indexed {file_path} details: {post_result.status_code}")
+            output.append(post_result.json()['uid'])
+        logger.info(f"Finished Indexing")
+        return output
+         
 
     ref_id_lookups = reference_id_lookups()
     instance_files = retrieve_instances()
 
-    denormalize_instances(reference_lookups=ref_id_lookups, files=instance_files) 
+    denormalize_instances(files=instance_files, references=ref_id_lookups) >> index_instances(files=instance_files)
        
             
 
