@@ -5,7 +5,7 @@ description = "Airflow example DAGs and tasks for supporting FOLIO edge-ai modul
 authors = [{name = "Jeremy Nelson", email = "jpnelson@stanford.edu"}]
 requires-python = ">= 3.12"
 dependencies = [
-    "folioclient"
+    "folioclient>=0.60.5"
 ]
 readme = "README.md"
 license = {file = "LICENSE-2.0.txt"}
