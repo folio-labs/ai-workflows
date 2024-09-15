@@ -54,8 +54,10 @@ def _expand_classifiers(instance: dict, ref_data_lookups: dict):
     for classification in instance.get("classifications", []):
         if "classificationTypeId" not in classification:
             continue
-        classification_type = classification.pop("classificationTypeId" )
-        classification["classificationTypeText"] = ref_data_lookups["classificationTypeId"].get(classification_type, "Unknown")
+        classification_type = classification.pop("classificationTypeId")
+        classification["classificationTypeText"] = ref_data_lookups[
+            "classificationTypeId"
+        ].get(classification_type, "Unknown")
 
 
 def _expand_contributors(instance: dict, ref_data_lookups: dict):
@@ -63,9 +65,13 @@ def _expand_contributors(instance: dict, ref_data_lookups: dict):
         if "contributorNameTypeId" not in contributor:
             continue
         contributor_name_type = contributor.pop("contributorNameTypeId")
-        contributor["contributorNameTypeText"] = ref_data_lookups["contributorNameTypeId"].get(contributor_name_type, "Unknown")
+        contributor["contributorNameTypeText"] = ref_data_lookups[
+            "contributorNameTypeId"
+        ].get(contributor_name_type, "Unknown")
         contributor_type = contributor.pop("contributorTypeId")
-        contributor["contributorTypeText"] = ref_data_lookups["contributorTypeId"].get(contributor_type, "Unknown")
+        contributor["contributorTypeText"] = ref_data_lookups["contributorTypeId"].get(
+            contributor_type, "Unknown"
+        )
 
 
 def _expand_identifiers(instance: dict, ref_data_lookups: dict):
@@ -73,19 +79,22 @@ def _expand_identifiers(instance: dict, ref_data_lookups: dict):
         if "identifierTypeId" not in identifier:
             continue
         identifier_type = identifier.pop("identifierTypeId")
-        identifier["identifierTypeText"] = ref_data_lookups["identifierTypeId"].get(identifier_type, "Unknown")
+        identifier["identifierTypeText"] = ref_data_lookups["identifierTypeId"].get(
+            identifier_type, "Unknown"
+        )
 
 
 def _expand_references(instances: list, ref_data_lookups: dict) -> list:
-    for i, instance in enumerate(instances):
+    for instance in instances:
 
         _expand_classifiers(instance, ref_data_lookups)
         _expand_contributors(instance, ref_data_lookups)
         _expand_identifiers(instance, ref_data_lookups)
 
-        
         instance_type_id = instance.pop("instanceTypeId")
-        instance["instanceTypeText"] = ref_data_lookups["instanceTypeId"].get(instance_type_id, "Unknown")
+        instance["instanceTypeText"] = ref_data_lookups["instanceTypeId"].get(
+            instance_type_id, "Unknown"
+        )
     return instances
 
 
@@ -96,6 +105,7 @@ def denormalize(instance_files: list, references: dict):
         with file_path.open() as fo:
             for line in fo.readlines():
                 records.append(json.loads(line))
+        logger.info(f"Total of {len(records):,} records")
         records = _expand_references(records, references)
         with file_path.open("w+") as fo:
             for record in records:
@@ -111,7 +121,7 @@ def enhance(instance: dict, reference_lookups: dict, reference_data: dict) -> di
         path_expression = parse(name)
         for match in path_expression.find(instance):
             if match.value not in reference_data[ref_key]:
-                logger.error(f"{value} not found in reference data's {ref_key}")
+                logger.error(f"{match.value} not found in reference data's {ref_key}")
                 continue
             parent = match.context.value
             parent[ref_key] = reference_data[ref_key][match.value]
@@ -129,9 +139,7 @@ def folio_id_lookups(folio_client: FolioClient) -> dict:
         "instanceTypeId": {},
     }
     classification_types = folio_client.folio_get(
-        "/classification-types",
-        key="classificationTypes",
-        query_params={"limit": 500}
+        "/classification-types", key="classificationTypes", query_params={"limit": 500}
     )
     for row in classification_types:
         lookups["classificationTypeId"][row["id"]] = row["name"]
@@ -148,14 +156,17 @@ def folio_id_lookups(folio_client: FolioClient) -> dict:
     for row in contributor_types:
         lookups["contributorTypeId"][row["id"]] = row["name"]
     identifier_types = folio_client.folio_get(
-        "/identifier-types?limit=500",
-        key="identifierTypes")
+        "/identifier-types?limit=500", key="identifierTypes"
+    )
     for row in identifier_types:
         lookups["identifierTypeId"][row["id"]] = row["name"]
-    instance_types = folio_client.folio_get("/instance-types?limit=500", key="instanceTypes")
+    instance_types = folio_client.folio_get(
+        "/instance-types?limit=500", key="instanceTypes"
+    )
     for row in instance_types:
         lookups["instanceTypeId"][row["id"]] = row["name"]
     return lookups
+
 
 def match_instance(instance: dict, cutoff: int = 80) -> Union[str, None]:
     connection = Connection.get_connection_from_secrets("edge_ai")
@@ -163,19 +174,15 @@ def match_instance(instance: dict, cutoff: int = 80) -> Union[str, None]:
         f"{connection.schema}://{connection.host}:{connection.port}/inventory/instance/similarity",
         json={
             "text": instance,
-        }
+        },
     )
 
     match_result.raise_for_status()
     match_payload = match_result.json()
-    if match_payload['score'] >= cutoff:
-        return match_result['uuid']
+    if match_payload["score"] >= cutoff:
+        return match_result["uuid"]
     logger.info(f"Match score of {match_result['score']} is below {cutoff} cutofff")
 
-
-
-
-                
 
 def reference_data(
     folio_client: FolioClient,
