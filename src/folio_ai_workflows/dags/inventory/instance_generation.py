@@ -1,3 +1,4 @@
+import json
 import logging
 
 import pendulum
@@ -16,6 +17,16 @@ from plugins.inventory.instance import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _folio_client():
+    connection = Connection.get_connection_from_secrets("folio")
+    return FolioClient(
+        connection.host,
+        connection.extra_dejson["tenant"],
+        connection.login,
+        connection.password,
+    )
 
 
 @dag(
@@ -46,17 +57,14 @@ def instance_generation():
         """
         context = get_current_context()
         params = context.get("params")
-        return {"trial_instance": params["instance"], "jobId": params["jobId"]}
+        return {
+            "trial_instance": json.loads(params["instance"]),
+            "jobId": params["jobId"],
+        }
 
     @task(multiple_outputs=True)
     def retrieve_instance_reference_data() -> dict:
-        connection = Connection.get_connection_from_secrets("folio")
-        folio_client = FolioClient(
-            connection.host,
-            connection.extra_dejson["tenant"],
-            connection.login,
-            connection.password,
-        )
+        folio_client = _folio_client()
         return reference_data(folio_client=folio_client)
 
     @task()
@@ -76,8 +84,9 @@ def instance_generation():
 
     @task()
     def post_instance_to_folio(instance: dict):
-        logger.info(f"Would post {instance} to Okapi")
-        return True
+        folio_client = _folio_client()
+        post_result = folio_client.folio_post("/inventory/instances", payload=instance)
+        return {"instance": post_result}
 
     @task()
     def send_matched_instance(task_instance):
