@@ -57,8 +57,12 @@ def instance_generation():
         """
         context = get_current_context()
         params = context.get("params")
+        if isinstance(params["instance"], str):
+            instance = json.loads(params["instance"])
+        else:
+            instance = params["instance"]
         return {
-            "trial_instance": json.loads(params["instance"]),
+            "trial_instance": instance,
             "jobId": params["jobId"],
         }
 
