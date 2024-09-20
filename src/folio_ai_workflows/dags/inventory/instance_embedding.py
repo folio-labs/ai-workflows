@@ -93,7 +93,7 @@ def instance_embedding():
     def index_instances(**kwargs):
         output = []
 
-        connection = Connection.get_connection_from_secrets("edge-ai")
+        connection = Connection.get_connection_from_secrets("edge_ai")
         host_root = Variable.get("host_root")
 
         for file_path in kwargs["files"]:
