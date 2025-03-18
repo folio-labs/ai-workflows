@@ -9,12 +9,7 @@ from airflow.operators.python import get_current_context
 
 from folioclient import FolioClient
 
-from plugins.inventory.instance import (
-    enhance,
-    match_instance,
-    reference_data,
-    reference_lookups,
-)
+from plugins.inventory.instance import match_instance
 
 logger = logging.getLogger(__name__)
 
@@ -66,15 +61,6 @@ def instance_generation():
             "jobId": params["jobId"],
         }
 
-    @task(multiple_outputs=True)
-    def retrieve_instance_reference_data() -> dict:
-        folio_client = _folio_client()
-        return reference_data(folio_client=folio_client)
-
-    @task()
-    def enhance_instance(reference_lookups: dict, instance: dict, reference_data: dict):
-        return enhance(instance, reference_lookups, reference_data)
-
     @task.branch
     def match_existing_instances(modified_instance, task_instance):
         logger.info(
@@ -106,19 +92,11 @@ def instance_generation():
 
     setup = incoming_instance_record()
 
-    instance_reference_data = retrieve_instance_reference_data()
-
-    modified_instance = enhance_instance(
-        reference_lookups=reference_lookups,
-        instance=setup["trial_instance"],
-        reference_data=instance_reference_data,
-    )
-
-    found_match = match_existing_instances(modified_instance)
+    found_match = match_existing_instances(setup["trial_instance"])
 
     (
         found_match
-        >> [send_matched_instance(), post_instance_to_folio(modified_instance)]
+        >> [send_matched_instance(), post_instance_to_folio(setup["trial_instance"])]
         >> notify_edge_ai(setup["jobId"])
     )
 
